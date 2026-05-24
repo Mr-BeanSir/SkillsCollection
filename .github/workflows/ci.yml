@@ -1,4 +1,4 @@
-name: CI
+name: PR Validate
 
 on:
   pull_request:
@@ -7,11 +7,11 @@ on:
       - "skills/**"
 
 permissions:
-  contents: write
-  pull-requests: read
+  contents: read
+  pull-requests: write
 
 jobs:
-  validate-and-merge:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout PR branch
@@ -19,7 +19,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.head_ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -37,15 +36,40 @@ jobs:
         if: steps.changed.outputs.files != ''
         run: node scripts/validate.mjs ${{ steps.changed.outputs.files }}
 
-      - name: Merge index.json
+      - name: Check ownership
         if: steps.changed.outputs.files != ''
-        run: node scripts/merge-index.mjs
-
-      - name: Commit updated index.json
-        if: steps.changed.outputs.files != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add index.json
-          git diff --cached --quiet || git commit -m "chore: update index.json"
-          git push
+          UNAUTHORIZED=""
+          for FILE in ${{ steps.changed.outputs.files }}; do
+            CREATOR_EMAIL=$(git log --diff-filter=A --format='%ae' -- "$FILE" | tail -1)
+            echo "$FILE: 创建者email=$CREATOR_EMAIL, PR作者=$PR_AUTHOR"
+            if [ -z "$CREATOR_EMAIL" ]; then
+              echo "  ⚠️  无法确定创建者，跳过"
+              continue
+            fi
+            CREATOR_LOGIN=""
+            if [[ "$CREATOR_EMAIL" =~ ^[0-9]+\+([a-zA-Z0-9-]+)@users\.noreply\.github\.com$ ]]; then
+              CREATOR_LOGIN="${BASH_REMATCH[1]}"
+            elif [[ "$CREATOR_EMAIL" =~ ^([a-zA-Z0-9-]+)@users\.noreply\.github\.com$ ]]; then
+              CREATOR_LOGIN="${BASH_REMATCH[1]}"
+            else
+              CREATOR_LOGIN=$(gh api "search/users?q=$CREATOR_EMAIL+in:email" --jq '.items[0].login // empty' 2>/dev/null || true)
+            fi
+            if [ -z "$CREATOR_LOGIN" ]; then
+              echo "  ⚠️  无法解析创建者用户名，跳过"
+              continue
+            fi
+            echo "  创建者用户: $CREATOR_LOGIN"
+            if [ "$CREATOR_LOGIN" != "$PR_AUTHOR" ]; then
+              UNAUTHORIZED="$UNAUTHORIZED\n- \`$FILE\` (创建者: @$CREATOR_LOGIN)"
+            fi
+          done
+          if [ -n "$UNAUTHORIZED" ]; then
+            BODY="⚠️ **权限校验**\n\n您修改了以下非您创建的文件：$UNAUTHORIZED\n\n非文件创建者不允许修改，如有其他情况请说明，无评论一天后自动关闭。"
+            gh pr comment "$PR_NUMBER" --body "$(echo -e "$BODY")"
+            echo "已添加权限校验评论"
+          fi

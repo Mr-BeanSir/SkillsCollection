@@ -20,8 +20,11 @@ const SKILLS_DIR = "skills";
 const INDEX_PATH = "index.json";
 
 function getChangedFiles() {
-  // 获取 PR 中相对于 main 变更的文件列表
-  const diff = execSync("git diff --name-status origin/main...HEAD", {
+  // PUSH_BEFORE: push event 携带的变更前 SHA，支持多 commit push
+  // 未设置时回退到 HEAD~1（单次直接 push）
+  const before = process.env.PUSH_BEFORE;
+  const range = before ? `${before}..HEAD` : "HEAD~1..HEAD";
+  const diff = execSync(`git diff --name-status ${range}`, {
     encoding: "utf-8",
   }).trim();
 
@@ -32,11 +35,13 @@ function getChangedFiles() {
   const deleted = [];
 
   for (const line of diff.split("\n")) {
-    const [status, filePath] = line.split("\t");
+    const parts = line.split("\t");
+    const status = parts[0];
+    const filePath = parts[1];
     if (!filePath || !filePath.startsWith(SKILLS_DIR + "/")) continue;
     if (!filePath.endsWith(".json")) continue;
 
-    switch (status) {
+    switch (status[0]) {
       case "A":
         added.push(filePath);
         break;
@@ -46,11 +51,13 @@ function getChangedFiles() {
       case "D":
         deleted.push(filePath);
         break;
-      // R (rename) = delete old + add new
+      // R (rename) = delete old + add new, 输出格式: R100\told\tnew
       case "R": {
-        const [, newPath] = line.split("\t").slice(1);
-        deleted.push(filePath);
-        added.push(newPath);
+        const newPath = parts[2];
+        if (newPath) {
+          deleted.push(filePath);
+          added.push(newPath);
+        }
         break;
       }
     }
@@ -83,6 +90,7 @@ function readCollectionJson(filePath) {
     title: data.title,
     description: data.description,
     version: data.version,
+    totalSkills: data.skills.length,
   };
 }
 
@@ -92,6 +100,7 @@ function upsertCollection(index, filePath, meta) {
     title: meta.title,
     description: meta.description,
     version: meta.version,
+    totalSkills: meta.totalSkills,
     file: filePath,
   };
 

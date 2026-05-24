@@ -1,0 +1,58 @@
+name: Close Stale Ownership PRs
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+
+jobs:
+  check-stale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PRs with ownership warning
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 获取所有 open PR
+          PR_NUMBERS=$(gh pr list --state open --json number --jq '.[].number')
+
+          for PR_NUMBER in $PR_NUMBERS; do
+            PR_AUTHOR=$(gh pr view "$PR_NUMBER" --json author --jq '.author.login')
+
+            # 获取 PR 所有评论
+            COMMENTS=$(gh api "repos/{owner}/{repo}/issues/$PR_NUMBER/comments" --paginate)
+
+            # 找到权限校验评论的 ID 和时间
+            WARNING_ID=$(echo "$COMMENTS" | jq -r '.[] | select(.body | test("非文件创建者不允许修改")) | .id' | head -1)
+            if [ -z "$WARNING_ID" ]; then
+              continue
+            fi
+
+            WARNING_TIME=$(echo "$COMMENTS" | jq -r ".[] | select(.id == $WARNING_ID) | .created_at")
+            echo "PR #$PR_NUMBER: 权限校验评论 ID=$WARNING_ID 时间=$WARNING_TIME"
+
+            # 检查警告之后是否有作者回复
+            HAS_REPLY=$(echo "$COMMENTS" | jq -r --arg author "$PR_AUTHOR" --argjson wid "$WARNING_ID" --arg wt "$WARNING_TIME" '
+              [.[] | select(.id > $wid and .user.login == $author and .created_at > $wt)] | length
+            ')
+
+            if [ "$HAS_REPLY" -gt 0 ]; then
+              echo "PR #$PR_NUMBER: 作者已回复，跳过"
+              continue
+            fi
+
+            # 计算时间差
+            WARNING_EPOCH=$(date -d "$WARNING_TIME" +%s)
+            NOW_EPOCH=$(date +%s)
+            DIFF_HOURS=$(( (NOW_EPOCH - WARNING_EPOCH) / 3600 ))
+
+            if [ "$DIFF_HOURS" -ge 24 ]; then
+              echo "PR #$PR_NUMBER: 超过 ${DIFF_HOURS} 小时无回复，关闭"
+              gh pr close "$PR_NUMBER" --comment "超过一天无回复，自动关闭。"
+            else
+              echo "PR #$PR_NUMBER: 距离警告 ${DIFF_HOURS} 小时，暂不关闭"
+            fi
+          done
