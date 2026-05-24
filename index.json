@@ -5,7 +5,7 @@
       "title": "基础skills",
       "description": "一组不论项目何时都会启用的skills",
       "version": "0.0.1",
-      "totalSkills": 6,
+      "total_skills": 6,
       "file": "skills/basic-skills.json"
     }
   ]

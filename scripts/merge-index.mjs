@@ -90,7 +90,7 @@ function readCollectionJson(filePath) {
     title: data.title,
     description: data.description,
     version: data.version,
-    totalSkills: data.skills.length,
+    total_skills: data.skills.length,
   };
 }
 
@@ -100,7 +100,7 @@ function upsertCollection(index, filePath, meta) {
     title: meta.title,
     description: meta.description,
     version: meta.version,
-    totalSkills: meta.totalSkills,
+    total_skills: meta.total_skills,
     file: filePath,
   };
 
