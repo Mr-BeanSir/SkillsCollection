@@ -17,13 +17,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # 获取所有 open PR
-          PR_NUMBERS=$(gh pr list --state open --json number --jq '.[].number')
+          # 定时任务没有 checkout，显式指定仓库，避免 gh 调用本地 git 推断仓库。
+          PR_NUMBERS=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json number --jq '.[].number')
 
           for PR_NUMBER in $PR_NUMBERS; do
-            PR_AUTHOR=$(gh pr view "$PR_NUMBER" --json author --jq '.author.login')
+            PR_AUTHOR=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')
 
             # 获取 PR 所有评论
-            COMMENTS=$(gh api "repos/{owner}/{repo}/issues/$PR_NUMBER/comments" --paginate)
+            COMMENTS=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate)
 
             # 找到权限校验评论的 ID 和时间
             WARNING_ID=$(echo "$COMMENTS" | jq -r '.[] | select(.body | test("非文件创建者不允许修改")) | .id' | head -1)
@@ -51,7 +52,7 @@ jobs:
 
             if [ "$DIFF_HOURS" -ge 24 ]; then
               echo "PR #$PR_NUMBER: 超过 ${DIFF_HOURS} 小时无回复，关闭"
-              gh pr close "$PR_NUMBER" --comment "超过一天无回复，自动关闭。"
+              gh pr close "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --comment "超过一天无回复，自动关闭。"
             else
               echo "PR #$PR_NUMBER: 距离警告 ${DIFF_HOURS} 小时，暂不关闭"
             fi
